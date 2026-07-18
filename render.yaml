@@ -1,0 +1,43 @@
+services:
+  # Backend API service
+  - type: web
+    name: aether-api
+    env: python
+    buildCommand: cd apps/api && pip install -r requirements.txt
+    startCommand: cd apps/api && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: true
+      - key: ANTHROPIC_API_KEY
+        sync: true
+      - key: OPENAI_API_KEY
+        sync: true
+      - key: SUPABASE_URL
+        sync: true
+      - key: SUPABASE_KEY
+        sync: true
+      - key: TAVILY_API_KEY
+        sync: true
+      - key: GOOGLE_CLIENT_ID
+        sync: true
+      - key: GOOGLE_CLIENT_SECRET
+        sync: true
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: true
+
+  # Frontend Web service
+  - type: web
+    name: aether-web
+    env: node
+    buildCommand: npm install && npm run build --workspace=apps/web
+    startCommand: npm run start --workspace=apps/web
+    envVars:
+      - key: NEXTAUTH_SECRET
+        sync: true
+      - key: NEXTAUTH_URL
+        sync: true
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: aether-api
+          property: host

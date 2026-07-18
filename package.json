@@ -1,0 +1,17 @@
+{
+  "name": "personal-ai-assistant",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:web": "cp .env apps/web/.env 2>/dev/null || true; npm run dev --workspace=apps/web",
+    "dev:api": "cp .env apps/api/.env 2>/dev/null || true; cd apps/api && uv run uvicorn app.main:app --reload --port 8000",
+    "dev": "concurrently -n \"web,api\" -c \"bgBlue,bgGreen\" \"npm run dev:web\" \"npm run dev:api\"",
+    "setup": "npm install && npm run build --workspace=packages/shared && cd apps/api && uv venv && uv pip install -r requirements.txt"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

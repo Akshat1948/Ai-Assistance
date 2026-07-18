@@ -1,0 +1,18 @@
+# Node
+node_modules/
+.next/
+.npm-cache/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Environment
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# Database
+*.db
