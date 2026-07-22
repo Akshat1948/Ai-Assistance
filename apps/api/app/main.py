@@ -1204,8 +1204,10 @@ async def anthropic_stream_response(messages_list, system_prompt, current_user_i
                 await asyncio.sleep(0.01)
 
     except APIStatusError as e:
+        print(f"[Anthropic API Error]: {e}", flush=True)
         yield f'0:{json.dumps(f"\\n[Anthropic API Error: {e.message}]")}\n'
     except Exception as e:
+        print(f"[Anthropic Stream Exception]: {e}", flush=True)
         yield f'0:{json.dumps(f"\\n[Error: {str(e)}]")}\n'
 
 @app.post("/api/chat", dependencies=[Depends(rate_limiter(max_requests=15))])
