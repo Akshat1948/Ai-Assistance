@@ -28,7 +28,7 @@ from .database import engine, Base, get_db, SessionLocal
 from .config import settings
 from .models import User, Memory, File, FileEmbedding, Note, Todo, CalendarEvent
 from .schemas import (
-    UserCreate, UserLogin, UserResponse, Token, TokenUser, ChatRequest, FileResponse,
+    UserCreate, UserLogin, UserResponse, Token, TokenUser, ChatRequest, ChatMessage, MessagePart, FileResponse,
     NoteCreate, NoteResponse, TodoCreate, TodoUpdate, TodoResponse,
     CalendarEventCreate, CalendarEventResponse
 )
