@@ -30,12 +30,20 @@ class Token(BaseModel):
     token_type: str
     user: TokenUser
 
+class MessagePart(BaseModel):
+    type: str
+    text: Optional[str] = None
+
 class ChatMessage(BaseModel):
+    id: Optional[str] = None
     role: str  # "user" or "assistant"
-    content: str
+    parts: Optional[List[MessagePart]] = None
+    content: Optional[str] = None
 
 class ChatRequest(BaseModel):
+    id: Optional[str] = None
     messages: List[ChatMessage]
+    trigger: Optional[str] = None
 
 class FileResponse(BaseModel):
     id: str

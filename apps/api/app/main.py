@@ -1074,6 +1074,11 @@ async def handle_agent_tools_execution(tool_name: str, tool_input: dict, current
     except Exception as e:
         return json.dumps({"status": "error", "message": f"Database operation failed: {str(e)}"})
 
+def extract_message_text(msg: ChatMessage) -> str:
+    if msg.parts:
+        return "".join([p.text for p in msg.parts if p.type == "text" and p.text])
+    return msg.content or ""
+
 async def anthropic_stream_response(messages_list, system_prompt, current_user_id: str, db: Session, is_code_mode=False):
     """Generator to stream tokens from Anthropic API formatted for Vercel AI SDK, with tool calling support."""
     api_key = settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY")
@@ -1094,7 +1099,7 @@ async def anthropic_stream_response(messages_list, system_prompt, current_user_i
         role = msg.role
         if role not in ["user", "assistant"]:
             role = "user"
-        anthropic_messages.append({"role": role, "content": msg.content})
+        anthropic_messages.append({"role": role, "content": extract_message_text(msg)})
 
     if is_code_mode:
         system_prompt += (
@@ -1211,7 +1216,7 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    latest_user_message = next((m.content for m in reversed(request.messages) if m.role == "user"), "")
+    latest_user_message = next((extract_message_text(m) for m in reversed(request.messages) if m.role == "user"), "")
     is_code_mode = fastapi_request.headers.get("x-code-assistant") == "true"
     
     memories_text = ""
