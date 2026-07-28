@@ -15,7 +15,6 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from anthropic import AsyncAnthropic, APIStatusError
 import openai
 import supabase
 from pypdf import PdfReader
@@ -509,7 +508,7 @@ async def get_embedding(text_content: str, api_key: str | None) -> list[float]:
         return [random.uniform(-0.1, 0.1) for _ in range(1536)]
 
 async def extract_memories(user_message: str, api_key: str | None) -> list[str]:
-    """Instruct Claude to extract persistent facts from the user message, or run rule-based triggers in mock mode."""
+    """Instruct Claude via OpenRouter to extract persistent facts from the user message, or run rule-based triggers in mock mode."""
     if not api_key:
         msg = user_message.lower()
         extracted = []
@@ -528,7 +527,10 @@ async def extract_memories(user_message: str, api_key: str | None) -> list[str]:
         return extracted
 
     try:
-        client = AsyncAnthropic(api_key=api_key)
+        client = openai.AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key
+        )
         prompt = (
             "Analyze the following user message from a chat conversation. Determine if it contains any persistent personal facts, preferences, or settings about the user that are worth remembering for future sessions (e.g., 'I live in Seattle', 'I prefer dark mode', 'My dog is named Max').\n"
             "Only extract facts that are direct user preferences or characteristics. Ignore transient questions, temporary commands, or general knowledge queries.\n\n"
@@ -538,13 +540,13 @@ async def extract_memories(user_message: str, api_key: str | None) -> list[str]:
             f"User Message: \"{user_message}\""
         )
         
-        response = await client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}]
+        response = await client.chat.completions.create(
+            model="anthropic/claude-3.5-sonnet",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0
         )
         
-        content = response.content[0].text.strip()
+        content = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else "[]"
         if content.startswith("```"):
             lines = content.split("\n")
             if lines[0].startswith("```json") or lines[0].startswith("```"):
@@ -659,12 +661,12 @@ async def get_upcoming_reminders_list(user_id: str, db: Session) -> list:
 async def process_memory_task(
     user_id: str,
     user_message: str,
-    anthropic_key: str | None,
+    openrouter_key: str | None,
     openai_key: str | None,
     session_maker
 ):
     """Background task to extract, embed, and store user memories in the database."""
-    facts = await extract_memories(user_message, anthropic_key)
+    facts = await extract_memories(user_message, openrouter_key)
     if not facts:
         return
         
@@ -1080,26 +1082,22 @@ def extract_message_text(msg: ChatMessage) -> str:
     return msg.content or ""
 
 async def anthropic_stream_response(messages_list, system_prompt, current_user_id: str, db: Session, is_code_mode=False):
-    """Generator to stream tokens from Anthropic API formatted for Vercel AI SDK, with tool calling support."""
-    api_key = settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY")
+    """Generator to stream tokens from OpenRouter API formatted for Vercel AI SDK."""
+    api_key = settings.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         fallback_msg = (
-            f"Hello! The Anthropic API key is not configured, so I am running in mock mode.\n\n"
+            f"Hello! The OpenRouter API key is not configured, so I am running in mock mode.\n\n"
             f"Active System Instruction Context:\n======================\n{system_prompt}\n======================\n\n"
-            "Try saying 'Create a note named Draft with details' or 'Add a task to buy groceries' to test the CRUD tools loop!"
+            "To connect me to a live model via OpenRouter, please configure OPENROUTER_API_KEY in the environment or backend settings."
         )
         async for chunk in mock_stream_response(fallback_msg):
             yield chunk
         return
 
-    client = AsyncAnthropic(api_key=api_key)
-    
-    anthropic_messages = []
-    for msg in messages_list:
-        role = msg.role
-        if role not in ["user", "assistant"]:
-            role = "user"
-        anthropic_messages.append({"role": role, "content": extract_message_text(msg)})
+    client = openai.AsyncOpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
 
     if is_code_mode:
         system_prompt += (
@@ -1109,105 +1107,27 @@ async def anthropic_stream_response(messages_list, system_prompt, current_user_i
             "and Big O complexity performance analysis."
         )
 
+    openai_messages = [{"role": "system", "content": system_prompt}]
+    for msg in messages_list:
+        role = msg.role
+        if role not in ["user", "assistant", "system"]:
+            role = "user"
+        openai_messages.append({"role": role, "content": extract_message_text(msg)})
+
     try:
-        response = await client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=1024,
-            system=system_prompt,
-            messages=anthropic_messages,
-            tools=MANAGE_NOTES_TODOS_TOOLS
+        response_stream = await client.chat.completions.create(
+            model="anthropic/claude-3.5-sonnet",
+            messages=openai_messages,
+            stream=True
         )
 
-        tool_calls = [content for content in response.content if content.type == "tool_use"]
-        
-        if tool_calls:
-            tool_use = tool_calls[0]
-            tool_name = tool_use.name
-            tool_input = tool_use.input
-            tool_call_id = tool_use.id
-            
-            print(f"[Agent Tool Execution] Claude chose to execute: {tool_name} with: {tool_input}")
-            
-            tavily_key = settings.TAVILY_API_KEY or os.environ.get("TAVILY_API_KEY")
-            tool_result_content = ""
-            
-            if tool_name == "web_search":
-                query = tool_input.get("query", "")
-                if tavily_key:
-                    tool_result_content = await execute_tavily_search(query, tavily_key)
-                else:
-                    tool_result_content = (
-                        f"Mock Web Search Results for '{query}':\n"
-                        "- Tavily API key is not configured. Enable TAVILY_API_KEY in backend settings."
-                    )
-            else:
-                tool_result_content = await handle_agent_tools_execution(tool_name, tool_input, current_user_id, db)
-            
-            action_desc = f"Executing tool: {tool_name}..."
-            if tool_name == "create_note":
-                action_desc = f"📝 Creating note \"{tool_input.get('title')}\"..."
-            elif tool_name == "list_notes":
-                action_desc = "📁 Fetching your notes list..."
-            elif tool_name == "create_todo":
-                action_desc = f"✅ Adding task \"{tool_input.get('task')}\"..."
-            elif tool_name == "list_todos":
-                action_desc = "📋 Checking your todo items..."
-            elif tool_name == "create_calendar_event":
-                action_desc = f"📅 Scheduling event \"{tool_input.get('summary')}\"..."
-            elif tool_name == "list_calendar_events":
-                action_desc = "📅 Fetching calendar events..."
-            elif tool_name == "check_upcoming_reminders":
-                action_desc = "🔔 Fetching active alerts and reminders..."
-            elif tool_name == "web_search":
-                action_desc = f"🔍 Searching the web for: \"{tool_input.get('query')}\"..."
-                
-            yield f'0:{json.dumps(action_desc + "\n\n")}\n'
-            
-            assistant_content = []
-            for content in response.content:
-                if content.type == "text":
-                    assistant_content.append({"type": "text", "text": content.text})
-                elif content.type == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": content.id,
-                        "name": content.name,
-                        "input": content.input
-                    })
-            anthropic_messages.append({"role": "assistant", "content": assistant_content})
-            
-            anthropic_messages.append({
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_call_id,
-                        "content": tool_result_content
-                    }
-                ]
-            })
-            
-            async with client.messages.stream(
-                model="claude-3-5-sonnet-20240620",
-                max_tokens=1024,
-                system=system_prompt,
-                messages=anthropic_messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f'0:{json.dumps(text)}\n'
-        else:
-            text_blocks = [content.text for content in response.content if content.type == "text"]
-            full_text = "".join(text_blocks)
-            words = full_text.split(" ")
-            for word in words:
-                yield f'0:{json.dumps(word + " ")}\n'
-                await asyncio.sleep(0.01)
+        async for chunk in response_stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                yield f'0:{json.dumps(content)}\n'
 
-    except APIStatusError as e:
-        print(f"[Anthropic API Error]: {e}", flush=True)
-        yield f'0:{json.dumps(f"\\n[Anthropic API Error: {e.message}]")}\n'
     except Exception as e:
-        print(f"[Anthropic Stream Exception]: {e}", flush=True)
+        print(f"[OpenRouter Stream Exception]: {e}", flush=True)
         yield f'0:{json.dumps(f"\\n[Error: {str(e)}]")}\n'
 
 @app.post("/api/chat", dependencies=[Depends(rate_limiter(max_requests=15))])
@@ -1224,7 +1144,7 @@ async def chat(
     memories_text = ""
     file_context_text = ""
     openai_key = settings.OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY")
-    anthropic_key = settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY")
+    openrouter_key = settings.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY")
 
     if latest_user_message:
         query_embedding = await get_embedding(latest_user_message, openai_key)
@@ -1303,7 +1223,7 @@ async def chat(
             process_memory_task,
             current_user.id,
             latest_user_message,
-            anthropic_key,
+            openrouter_key,
             openai_key,
             SessionLocal
         )
@@ -1331,35 +1251,35 @@ async def chat_vision(
     base64_data = base64.b64encode(file_bytes).decode("utf-8")
     file_type = file.content_type or "image/jpeg"
     
-    api_key = settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY")
+    api_key = settings.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         mock_msg = (
-            "Hello! I received your image successfully. However, the Anthropic API key is not configured "
+            "Hello! I received your image successfully. However, the OpenRouter API key is not configured "
             "on the backend. To enable active image analysis via Claude 3.5 Sonnet, please configure "
-            "ANTHROPIC_API_KEY in the environment."
+            "OPENROUTER_API_KEY in the environment."
         )
         return StreamingResponse(
             mock_stream_response(mock_msg),
             media_type="text/event-stream"
         )
         
-    client = AsyncAnthropic(api_key=api_key)
+    client = openai.AsyncOpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
     
     async def stream_vision_response():
         try:
-            async with client.messages.stream(
-                model="claude-3-5-sonnet-20240620",
-                max_tokens=1024,
+            response_stream = await client.chat.completions.create(
+                model="anthropic/claude-3.5-sonnet",
                 messages=[
                     {
                         "role": "user",
                         "content": [
                             {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": file_type,
-                                    "data": base64_data
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{file_type};base64,{base64_data}"
                                 }
                             },
                             {
@@ -1368,10 +1288,13 @@ async def chat_vision(
                             }
                         ]
                     }
-                ]
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f'0:{json.dumps(text)}\n'
+                ],
+                stream=True
+            )
+            async for chunk in response_stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    yield f'0:{json.dumps(content)}\n'
         except Exception as e:
             yield f'0:{json.dumps(f"\\n[Vision System Error: {str(e)}]")}\n'
 
