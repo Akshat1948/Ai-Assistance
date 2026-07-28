@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "supersecretjwtkeyfornextauthfastapimonorepo123!"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+    OPENROUTER_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     SUPABASE_URL: Optional[str] = None
