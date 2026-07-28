@@ -541,7 +541,7 @@ async def extract_memories(user_message: str, api_key: str | None) -> list[str]:
         )
         
         response = await client.chat.completions.create(
-            model="anthropic/claude-3.5-sonnet",
+            model="anthropic/claude-sonnet-4.5",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0
         )
@@ -1116,7 +1116,7 @@ async def anthropic_stream_response(messages_list, system_prompt, current_user_i
 
     try:
         response_stream = await client.chat.completions.create(
-            model="anthropic/claude-3.5-sonnet",
+            model="anthropic/claude-sonnet-4.5",
             messages=openai_messages,
             stream=True
         )
@@ -1255,7 +1255,7 @@ async def chat_vision(
     if not api_key:
         mock_msg = (
             "Hello! I received your image successfully. However, the OpenRouter API key is not configured "
-            "on the backend. To enable active image analysis via Claude 3.5 Sonnet, please configure "
+            "on the backend. To enable active image analysis via Claude Sonnet 4.5, please configure "
             "OPENROUTER_API_KEY in the environment."
         )
         return StreamingResponse(
@@ -1271,7 +1271,7 @@ async def chat_vision(
     async def stream_vision_response():
         try:
             response_stream = await client.chat.completions.create(
-                model="anthropic/claude-3.5-sonnet",
+                model="anthropic/claude-sonnet-4.5",
                 messages=[
                     {
                         "role": "user",
